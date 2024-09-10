@@ -72,6 +72,7 @@ pub enum Times {
 }
 
 impl Expr {
+    /// Parses an expression from the provided token iterator.
     fn parse<I: Iterator<Item = Token>>(
         tokens: &mut iter::Peekable<I>,
     ) -> Result<Expr, ParsingError> {
@@ -82,6 +83,8 @@ impl Expr {
         }
     }
 
+    /// Parses an alternation expression from the provided token
+    /// iterator.
     fn parse_alternation<I: Iterator<Item = Token>>(
         tokens: &mut iter::Peekable<I>,
     ) -> Result<Expr, ParsingError> {
@@ -96,6 +99,8 @@ impl Expr {
         Ok(expr)
     }
 
+    /// Parses a concatenation expression from the provided token
+    /// iterator.
     fn parse_concatenation<I: Iterator<Item = Token>>(
         tokens: &mut iter::Peekable<I>,
     ) -> Result<Expr, ParsingError> {
@@ -110,6 +115,8 @@ impl Expr {
         Ok(expr)
     }
 
+    /// Parses a repetition expression from the provided token
+    /// iterator.
     fn parse_repetition<I: Iterator<Item = Token>>(
         tokens: &mut iter::Peekable<I>,
     ) -> Result<Expr, ParsingError> {
@@ -126,6 +133,7 @@ impl Expr {
         Ok(expr)
     }
 
+    /// Parses a grouping expression from the provided token iterator.
     fn parse_grouping<I: Iterator<Item = Token>>(
         tokens: &mut iter::Peekable<I>,
     ) -> Result<Expr, ParsingError> {
@@ -139,6 +147,7 @@ impl Expr {
         Expr::parse_matching(tokens)
     }
 
+    /// Parses a matching expression from the provided token iterator.
     fn parse_matching<I: Iterator<Item = Token>>(
         tokens: &mut iter::Peekable<I>,
     ) -> Result<Expr, ParsingError> {
@@ -149,6 +158,9 @@ impl Expr {
         }
     }
 
+    /// Matches the next token in the provided token iterator against
+    /// the passed token.  In the case of a match, it returns true and
+    /// advances the iterator cursor.
     fn match_token<I: Iterator<Item = Token>>(tokens: &mut iter::Peekable<I>, tok: Token) -> bool {
         match tokens.peek() {
             Some(&t) if t == tok => {
@@ -190,7 +202,8 @@ impl Regexp {
         tokens
     }
 
-    /// Performs the syntactic analysis the provided token stream.
+    /// Performs the syntactic analysis the provided token stream.  It
+    /// returns the parsed AST.
     pub fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
         let mut tokens = tokens.iter().copied().peekable();
         Expr::parse(&mut tokens)
