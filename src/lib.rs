@@ -5,7 +5,7 @@
 //! alternation (`|`), then concatenation, and finally the repetition
 //! operators (`*`, `+` and `?`).
 
-use std::iter;
+use std::{fmt, iter};
 
 /// Parsing error.
 #[derive(Debug, Eq, PartialEq)]
@@ -69,6 +69,28 @@ pub enum Times {
     ZeroOrMore,
     OneOrMore,
     ZeroOrOne,
+}
+
+impl fmt::Display for Times {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Times::ZeroOrMore => write!(f, "*"),
+            Times::OneOrMore => write!(f, "+"),
+            Times::ZeroOrOne => write!(f, "?"),
+        }
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expr::Alternation { lhs, rhs } => write!(f, "{lhs}|{rhs}"),
+            Expr::Concatenation { lhs, rhs } => write!(f, "{lhs}{rhs}"),
+            Expr::Repetition(expr, op) => write!(f, "{expr}{op}"),
+            Expr::Grouping(expr) => write!(f, "({expr})"),
+            Expr::Matching(ch) => write!(f, "{ch}"),
+        }
+    }
 }
 
 impl Expr {
@@ -368,5 +390,15 @@ mod tests {
     #[test]
     fn parse_error_eof() {
         assert_eq!(Regexp::parse(&Regexp::scan("a|")), Err(ParsingError::Eof))
+    }
+
+    #[test]
+    fn ast_to_string() {
+        assert_eq!(
+            Regexp::parse(&Regexp::scan("a+(b?|c)*d"))
+                .unwrap()
+                .to_string(),
+            "a+(b?|c)*d"
+        )
     }
 }
