@@ -5,7 +5,7 @@
 //! alternation (`|`), then concatenation, and finally the repetition
 //! operators (`*`, `+` and `?`).
 
-use std::{fmt, iter};
+use std::{fmt, iter, slice};
 
 /// Parsing error.
 #[derive(Debug, Eq, PartialEq)]
@@ -93,7 +93,7 @@ pub enum Times {
 }
 
 impl fmt::Display for Times {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Times::ZeroOrMore => write!(f, "*"),
             Times::OneOrMore => write!(f, "+"),
@@ -103,7 +103,7 @@ impl fmt::Display for Times {
 }
 
 impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Expr::Alternation { lhs, rhs } => write!(f, "{lhs}|{rhs}"),
             Expr::Concatenation { lhs, rhs } => write!(f, "{lhs}{rhs}"),
@@ -117,28 +117,25 @@ impl fmt::Display for Expr {
 /// Performs the syntactic analysis the provided tokens.  It returns
 /// the parsed AST.
 pub fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
-    Parser::new(tokens.iter().cloned()).parse()
+    Parser::parse(tokens)
 }
 
-/// Represents a syntactic token.
-struct Parser<I: Iterator<Item = Token>> {
+/// Represents a parser.
+struct Parser<'a> {
     /// Token peekable iterator.
-    iter: iter::Peekable<I>,
+    iter: iter::Peekable<slice::Iter<'a, Token>>,
 }
 
-impl<I: Iterator<Item = Token>> Parser<I> {
-    /// Returns a new [`Parser`].
-    fn new(tokens: I) -> Parser<I> {
-        Parser {
-            iter: tokens.peekable(),
-        }
-    }
-
-    /// Parses an expression.
-    fn parse(&mut self) -> Result<Expr, ParsingError> {
-        let expr = self.parse_alternation()?;
-        match self.iter.next() {
-            Some(tok) => Err(ParsingError::UnexpectedToken(tok)),
+impl Parser<'_> {
+    /// Performs the syntactic analysis the provided tokens.  It
+    /// returns the parsed AST.
+    fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
+        let mut parser = Parser {
+            iter: tokens.iter().peekable(),
+        };
+        let expr = parser.parse_alternation()?;
+        match parser.iter.next() {
+            Some(tok) => Err(ParsingError::UnexpectedToken(*tok)),
             None => Ok(expr),
         }
     }
@@ -199,8 +196,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     /// Parses a matching expression.
     fn parse_matching(&mut self) -> Result<Expr, ParsingError> {
         match self.iter.next() {
-            Some(Token::Char(ch)) => Ok(Expr::Matching(ch)),
-            Some(tok) => Err(ParsingError::UnexpectedToken(tok)),
+            Some(Token::Char(ch)) => Ok(Expr::Matching(*ch)),
+            Some(tok) => Err(ParsingError::UnexpectedToken(*tok)),
             None => Err(ParsingError::Eof),
         }
     }
@@ -208,7 +205,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     /// Matches the next token against the passed token.  In the case
     /// of a match, it returns true and advances the iterator cursor.
     fn check(&mut self, tok: Token) -> bool {
-        self.iter.next_if_eq(&tok).is_some()
+        self.iter.next_if_eq(&&tok).is_some()
     }
 }
 
