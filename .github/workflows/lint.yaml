@@ -1,14 +1,14 @@
-name: Test
+name: Lint
 on: [push, pull_request]
 permissions:
   contents: read
 env:
   CARGO_TERM_COLOR: always
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Run 'cargo test'
-        run: cargo test
+      - name: Run 'cargo pedant'
+        run: cargo pedant
