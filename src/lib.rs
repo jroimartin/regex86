@@ -42,6 +42,27 @@ impl From<char> for Token {
     }
 }
 
+/// Performs the lexical analysis of the provided regular expression.
+pub fn scan(regexp: &str) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    let mut chars = regexp.chars().peekable();
+    while let Some(cur) = chars.next() {
+        let cur = cur.into();
+        tokens.push(cur);
+        if let Some(&next) = chars.peek() {
+            let next = next.into();
+            if matches!(
+                cur,
+                Token::Char(_) | Token::Star | Token::Plus | Token::Question | Token::RightParen
+            ) && matches!(next, Token::Char(_) | Token::LeftParen)
+            {
+                tokens.push(Token::Concat);
+            }
+        }
+    }
+    tokens
+}
+
 /// The Abstract Syntax Tree (AST) of a regular expression.
 ///
 /// Implements following grammar (from weakest to strongest binding):
@@ -93,26 +114,40 @@ impl fmt::Display for Expr {
     }
 }
 
-impl Expr {
-    /// Parses an expression from the provided token iterator.
-    fn parse<I: Iterator<Item = Token>>(
-        tokens: &mut iter::Peekable<I>,
-    ) -> Result<Expr, ParsingError> {
-        let expr = Expr::parse_alternation(tokens)?;
-        match tokens.next() {
+/// Performs the syntactic analysis the provided tokens.  It returns
+/// the parsed AST.
+pub fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
+    Parser::new(tokens.iter().cloned()).parse()
+}
+
+/// Represents a syntactic token.
+struct Parser<I: Iterator<Item = Token>> {
+    /// Token peekable iterator.
+    iter: iter::Peekable<I>,
+}
+
+impl<I: Iterator<Item = Token>> Parser<I> {
+    /// Returns a new [`Parser`].
+    fn new(tokens: I) -> Parser<I> {
+        Parser {
+            iter: tokens.peekable(),
+        }
+    }
+
+    /// Parses an expression.
+    fn parse(&mut self) -> Result<Expr, ParsingError> {
+        let expr = self.parse_alternation()?;
+        match self.iter.next() {
             Some(tok) => Err(ParsingError::UnexpectedToken(tok)),
             None => Ok(expr),
         }
     }
 
-    /// Parses an alternation expression from the provided token
-    /// iterator.
-    fn parse_alternation<I: Iterator<Item = Token>>(
-        tokens: &mut iter::Peekable<I>,
-    ) -> Result<Expr, ParsingError> {
-        let mut expr = Expr::parse_concatenation(tokens)?;
-        while Expr::match_token(tokens, Token::Pipe) {
-            let rhs = Expr::parse_concatenation(tokens)?;
+    /// Parses an alternation expression.
+    fn parse_alternation(&mut self) -> Result<Expr, ParsingError> {
+        let mut expr = self.parse_concatenation()?;
+        while self.check(Token::Pipe) {
+            let rhs = self.parse_concatenation()?;
             expr = Expr::Alternation {
                 lhs: Box::new(expr),
                 rhs: Box::new(rhs),
@@ -121,14 +156,11 @@ impl Expr {
         Ok(expr)
     }
 
-    /// Parses a concatenation expression from the provided token
-    /// iterator.
-    fn parse_concatenation<I: Iterator<Item = Token>>(
-        tokens: &mut iter::Peekable<I>,
-    ) -> Result<Expr, ParsingError> {
-        let mut expr = Expr::parse_repetition(tokens)?;
-        while Expr::match_token(tokens, Token::Concat) {
-            let rhs = Expr::parse_repetition(tokens)?;
+    /// Parses a concatenation expression.
+    fn parse_concatenation(&mut self) -> Result<Expr, ParsingError> {
+        let mut expr = self.parse_repetition()?;
+        while self.check(Token::Concat) {
+            let rhs = self.parse_repetition()?;
             expr = Expr::Concatenation {
                 lhs: Box::new(expr),
                 rhs: Box::new(rhs),
@@ -137,98 +169,46 @@ impl Expr {
         Ok(expr)
     }
 
-    /// Parses a repetition expression from the provided token
-    /// iterator.
-    fn parse_repetition<I: Iterator<Item = Token>>(
-        tokens: &mut iter::Peekable<I>,
-    ) -> Result<Expr, ParsingError> {
-        let expr = Expr::parse_grouping(tokens)?;
-        if Expr::match_token(tokens, Token::Star) {
+    /// Parses a repetition expression.
+    fn parse_repetition(&mut self) -> Result<Expr, ParsingError> {
+        let expr = self.parse_grouping()?;
+        if self.check(Token::Star) {
             return Ok(Expr::Repetition(Box::new(expr), Times::ZeroOrMore));
         }
-        if Expr::match_token(tokens, Token::Plus) {
+        if self.check(Token::Plus) {
             return Ok(Expr::Repetition(Box::new(expr), Times::OneOrMore));
         }
-        if Expr::match_token(tokens, Token::Question) {
+        if self.check(Token::Question) {
             return Ok(Expr::Repetition(Box::new(expr), Times::ZeroOrOne));
         }
         Ok(expr)
     }
 
-    /// Parses a grouping expression from the provided token iterator.
-    fn parse_grouping<I: Iterator<Item = Token>>(
-        tokens: &mut iter::Peekable<I>,
-    ) -> Result<Expr, ParsingError> {
-        if Expr::match_token(tokens, Token::LeftParen) {
-            let expr = Expr::parse_alternation(tokens)?;
-            return match tokens.next() {
+    /// Parses a grouping expression.
+    fn parse_grouping(&mut self) -> Result<Expr, ParsingError> {
+        if self.check(Token::LeftParen) {
+            let expr = self.parse_alternation()?;
+            return match self.iter.next() {
                 Some(Token::RightParen) => Ok(Expr::Grouping(Box::new(expr))),
                 _ => Err(ParsingError::UnmatchedParenthesis),
             };
         }
-        Expr::parse_matching(tokens)
+        self.parse_matching()
     }
 
-    /// Parses a matching expression from the provided token iterator.
-    fn parse_matching<I: Iterator<Item = Token>>(
-        tokens: &mut iter::Peekable<I>,
-    ) -> Result<Expr, ParsingError> {
-        match tokens.next() {
+    /// Parses a matching expression.
+    fn parse_matching(&mut self) -> Result<Expr, ParsingError> {
+        match self.iter.next() {
             Some(Token::Char(ch)) => Ok(Expr::Matching(ch)),
             Some(tok) => Err(ParsingError::UnexpectedToken(tok)),
             None => Err(ParsingError::Eof),
         }
     }
 
-    /// Matches the next token in the provided token iterator against
-    /// the passed token.  In the case of a match, it returns true and
-    /// advances the iterator cursor.
-    fn match_token<I: Iterator<Item = Token>>(tokens: &mut iter::Peekable<I>, tok: Token) -> bool {
-        match tokens.peek() {
-            Some(&t) if t == tok => {
-                tokens.next();
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-/// Represents a regular expression.
-pub struct Regexp;
-
-impl Regexp {
-    /// Performs the lexical analysis of the provided regular
-    /// expression.
-    pub fn scan(regexp: &str) -> Vec<Token> {
-        let mut tokens = Vec::new();
-        let mut chars = regexp.chars().peekable();
-        while let Some(cur) = chars.next() {
-            let cur = cur.into();
-            tokens.push(cur);
-            if let Some(&next) = chars.peek() {
-                let next = next.into();
-                if matches!(
-                    cur,
-                    Token::Char(_)
-                        | Token::Star
-                        | Token::Plus
-                        | Token::Question
-                        | Token::RightParen
-                ) && matches!(next, Token::Char(_) | Token::LeftParen)
-                {
-                    tokens.push(Token::Concat);
-                }
-            }
-        }
-        tokens
-    }
-
-    /// Performs the syntactic analysis the provided token stream.  It
-    /// returns the parsed AST.
-    pub fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
-        let mut tokens = tokens.iter().copied().peekable();
-        Expr::parse(&mut tokens)
+    /// Matches the next token against the passed token.  In the case
+    /// of a match, it returns true and advances the iterator cursor.
+    fn check(&mut self, tok: Token) -> bool {
+        self.iter.next_if_eq(&tok).is_some()
     }
 }
 
@@ -238,21 +218,18 @@ mod tests {
 
     #[test]
     fn scan_empty() {
-        assert_eq!(Regexp::scan(""), &[]);
+        assert_eq!(scan(""), &[]);
     }
 
     #[test]
     fn scan_not_quantifiable() {
-        assert_eq!(
-            Regexp::scan("a++"),
-            &[Token::Char('a'), Token::Plus, Token::Plus]
-        );
+        assert_eq!(scan("a++"), &[Token::Char('a'), Token::Plus, Token::Plus]);
     }
 
     #[test]
     fn scan_complex() {
         assert_eq!(
-            Regexp::scan("a+(bc?|d+e+)*f"),
+            scan("a+(bc?|d+e+)*f"),
             &[
                 Token::Char('a'),
                 Token::Plus,
@@ -278,13 +255,13 @@ mod tests {
 
     #[test]
     fn parse_char() {
-        assert_eq!(Regexp::parse(&Regexp::scan("a")), Ok(Expr::Matching('a')));
+        assert_eq!(parse(&scan("a")), Ok(Expr::Matching('a')));
     }
 
     #[test]
     fn parse_concat() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("ab")),
+            parse(&scan("ab")),
             Ok(Expr::Concatenation {
                 lhs: Box::new(Expr::Matching('a')),
                 rhs: Box::new(Expr::Matching('b')),
@@ -295,7 +272,7 @@ mod tests {
     #[test]
     fn parse_repetition() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("a*b")),
+            parse(&scan("a*b")),
             Ok(Expr::Concatenation {
                 lhs: Box::new(Expr::Repetition(
                     Box::new(Expr::Matching('a')),
@@ -309,7 +286,7 @@ mod tests {
     #[test]
     fn parse_alternation() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("a|b|c")),
+            parse(&scan("a|b|c")),
             Ok(Expr::Alternation {
                 lhs: Box::new(Expr::Alternation {
                     lhs: Box::new(Expr::Matching('a')),
@@ -323,7 +300,7 @@ mod tests {
     #[test]
     fn parse_groups() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("a|((b|c)|d)")),
+            parse(&scan("a|((b|c)|d)")),
             Ok(Expr::Alternation {
                 lhs: Box::new(Expr::Matching('a')),
                 rhs: Box::new(Expr::Grouping(Box::new(Expr::Alternation {
@@ -340,7 +317,7 @@ mod tests {
     #[test]
     fn parse_complex() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("a+(b?|c)*d")),
+            parse(&scan("a+(b?|c)*d")),
             Ok(Expr::Concatenation {
                 lhs: Box::new(Expr::Concatenation {
                     lhs: Box::new(Expr::Repetition(
@@ -366,7 +343,7 @@ mod tests {
     #[test]
     fn parse_error_unmatched_parenthesis() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("((a|b)|c")),
+            parse(&scan("((a|b)|c")),
             Err(ParsingError::UnmatchedParenthesis)
         )
     }
@@ -374,7 +351,7 @@ mod tests {
     #[test]
     fn parse_error_not_quantifiable() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("a++")),
+            parse(&scan("a++")),
             Err(ParsingError::UnexpectedToken(Token::Plus))
         )
     }
@@ -382,22 +359,20 @@ mod tests {
     #[test]
     fn parse_error_unexpected_token() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("|a")),
+            parse(&scan("|a")),
             Err(ParsingError::UnexpectedToken(Token::Pipe))
         )
     }
 
     #[test]
     fn parse_error_eof() {
-        assert_eq!(Regexp::parse(&Regexp::scan("a|")), Err(ParsingError::Eof))
+        assert_eq!(parse(&scan("a|")), Err(ParsingError::Eof))
     }
 
     #[test]
     fn ast_to_string() {
         assert_eq!(
-            Regexp::parse(&Regexp::scan("a+(b?|c)*d"))
-                .unwrap()
-                .to_string(),
+            parse(&scan("a+(b?|c)*d")).unwrap().to_string(),
             "a+(b?|c)*d"
         )
     }
