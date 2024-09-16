@@ -374,7 +374,7 @@ impl Emulator {
     pub fn emulate(&mut self, s: &str) -> bool {
         self.reset();
         loop {
-            if self.idx == s.len() {
+            if self.idx == s.chars().count() {
                 return self
                     .states
                     .iter()
@@ -641,6 +641,7 @@ mod tests {
             ("(a?)+b", "", false),
             ("(a*)+b", "", false),
             (&("a?".repeat(50) + &"a".repeat(50)), &"a".repeat(50), true),
+            ("ƒoo", "ƒoo", true),
         ] {
             let tokens = scan(re);
             let expr = parse(&tokens).unwrap();
