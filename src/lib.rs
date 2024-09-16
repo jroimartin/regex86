@@ -5,10 +5,10 @@
 //! alternation (`|`), then concatenation, and finally the repetition
 //! operators (`*`, `+` and `?`).
 
-use std::{cell::RefCell, fmt, iter, rc::Rc, slice, str};
+use std::{cell::RefCell, collections::HashSet, fmt, iter, rc::Rc, slice, str};
 
 /// Lexical token.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Token {
     Concat,
     Star,
@@ -56,7 +56,7 @@ pub fn scan(regexp: &str) -> Vec<Token> {
 }
 
 /// Parsing error.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ParsingError {
     UnmatchedParenthesis,
     UnexpectedToken(Token),
@@ -81,7 +81,7 @@ pub enum ParsingError {
 /// Note that the `CONCAT` token is not present in the string
 /// representation of the regular expression.  It is added by the
 /// lexical scanner to represent two adjacent expressions.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Alternation { lhs: Box<Expr>, rhs: Box<Expr> },
     Concatenation { lhs: Box<Expr>, rhs: Box<Expr> },
@@ -92,7 +92,7 @@ pub enum Expr {
 
 /// Number of times the inner expression of an [`Expr::Repetition`]
 /// expression is repeated.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Times {
     ZeroOrMore,
     OneOrMore,
@@ -127,7 +127,7 @@ pub fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
     Parser::parse(tokens)
 }
 
-/// Stores the state of the regular expression parser.
+/// Regular expression parser.
 struct Parser<'a> {
     /// Token peekable iterator.
     tokens: iter::Peekable<slice::Iter<'a, Token>>,
@@ -216,18 +216,11 @@ impl Parser<'_> {
     }
 }
 
-/// Stores the state of the regular expression emulator.
-pub struct Emulator {
-    /// String to match.
-    s: String,
-
-    /// Current states of the emulator.
-    states: Vec<(Rc<RefCell<State>>, usize)>,
-}
-
 /// A state of the internal non-deterministic finite automata (NFA).
-#[derive(Default)]
-struct State {
+pub struct State {
+    /// Unique state identifier.
+    id: u64,
+
     /// Character to match.
     ch: Option<char>,
 
@@ -235,48 +228,48 @@ struct State {
     fwd: Vec<Rc<RefCell<State>>>,
 }
 
-impl Emulator {
-    /// Returns a new [`Emulator`].
-    pub fn new(expr: &Expr, s: &str) -> Emulator {
-        let (start, _) = Emulator::compile(expr);
-        Emulator {
-            s: s.into(),
-            states: vec![(start, 0)],
-        }
-    }
+/// Regular expression compiler.
+#[derive(Default)]
+pub struct Compiler {
+    /// Next state identifier.
+    next_state_id: u64,
+}
 
-    /// Creates the internal NFA.  It returns the start and end states
-    /// of the provided expression.
-    fn compile(expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
+impl Compiler {
+    /// Returns the NFA corresponding to the provided AST.  The
+    /// returned tuple is of the form `(start_state, end_state)`.
+    pub fn nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
         match expr {
             Expr::Alternation { lhs, rhs } => {
-                let split = Rc::new(RefCell::new(State::default()));
-                let join = Rc::new(RefCell::new(State::default()));
-                let (lhs_start, lhs_end) = Self::compile(lhs);
-                let (rhs_start, rhs_end) = Self::compile(rhs);
+                let split = self.new_state();
+                let join = self.new_state();
+                let (lhs_start, lhs_end) = self.nfa(lhs);
+                let (rhs_start, rhs_end) = self.nfa(rhs);
                 split.borrow_mut().fwd = vec![lhs_start, rhs_start];
                 lhs_end.borrow_mut().fwd = vec![Rc::clone(&join)];
                 rhs_end.borrow_mut().fwd = vec![Rc::clone(&join)];
                 (split, join)
             }
             Expr::Concatenation { lhs, rhs } => {
-                let (lhs_start, lhs_end) = Self::compile(lhs);
-                let (rhs_start, rhs_end) = Self::compile(rhs);
+                let (lhs_start, lhs_end) = self.nfa(lhs);
+                let (rhs_start, rhs_end) = self.nfa(rhs);
                 lhs_end.borrow_mut().fwd = vec![rhs_start];
                 (lhs_start, rhs_end)
             }
             Expr::Repetition(expr, times) => {
-                let (expr_start, expr_end) = Self::compile(expr);
-                let join = Rc::new(RefCell::new(State::default()));
+                // FIXME: Memory leak due to circular dependency?
+                // Should I use std::rc::Weak for back links?
+                let (expr_start, expr_end) = self.nfa(expr);
+                let join = self.new_state();
                 match times {
                     Times::ZeroOrOne => {
-                        let split = Rc::new(RefCell::new(State::default()));
+                        let split = self.new_state();
                         split.borrow_mut().fwd = vec![expr_start, Rc::clone(&join)];
                         expr_end.borrow_mut().fwd = vec![Rc::clone(&join)];
                         (split, join)
                     }
                     Times::ZeroOrMore => {
-                        let split = Rc::new(RefCell::new(State::default()));
+                        let split = self.new_state();
                         split.borrow_mut().fwd = vec![expr_start, Rc::clone(&join)];
                         expr_end.borrow_mut().fwd = vec![Rc::clone(&join), Rc::clone(&split)];
                         (split, join)
@@ -287,57 +280,114 @@ impl Emulator {
                     }
                 }
             }
-            Expr::Grouping(expr) => Self::compile(expr),
+            Expr::Grouping(expr) => self.nfa(expr),
             Expr::Matching(ch) => {
-                let expr = Rc::new(RefCell::new(State {
-                    ch: Some(*ch),
-                    ..State::default()
-                }));
-                (Rc::clone(&expr), expr)
+                let expr = self.new_state();
+                let end = self.new_state();
+                expr.borrow_mut().ch = Some(*ch);
+                expr.borrow_mut().fwd = vec![Rc::clone(&end)];
+                (expr, end)
             }
         }
     }
 
-    /// Emulates one step forward.
-    pub fn step(&mut self) -> Option<bool> {
-        if self.states.is_empty() {
-            return Some(false);
-        }
+    /// Returns a new [`State`].  Every generated state has a unique
+    /// identifier.
+    fn new_state(&mut self) -> Rc<RefCell<State>> {
+        let state = Rc::new(RefCell::new(State {
+            id: self.next_state_id,
+            ch: None,
+            fwd: Vec::new(),
+        }));
+        self.next_state_id += 1;
+        state
+    }
+}
 
-        let mut new_states = Vec::new();
-        for (state, mut idx) in &self.states {
-            let state = state.borrow();
-            if let Some(ch) = state.ch {
-                let Some(sch) = self.s.chars().nth(idx) else {
+/// Stores the state of the regular expression emulator.
+pub struct Emulator {
+    /// Internal NFA.
+    nfa: Rc<RefCell<State>>,
+
+    /// Current index in the input string.
+    idx: usize,
+
+    /// Current states of the emulator.
+    states: Vec<Rc<RefCell<State>>>,
+}
+
+impl Emulator {
+    /// Returns a new [`Emulator`] from the provided regular
+    /// expression AST.
+    pub fn new(expr: &Expr) -> Result<Emulator, ParsingError> {
+        let mut comp = Compiler::default();
+        let (nfa, _) = comp.nfa(expr);
+        let mut emu = Emulator {
+            nfa: Rc::clone(&nfa),
+            idx: 0,
+            states: Vec::new(),
+        };
+        emu.states = Self::walk(nfa, &mut HashSet::new());
+        Ok(emu)
+    }
+
+    /// Resets the internal state of the compiler.
+    fn reset(&mut self) {
+        self.idx = 0;
+        self.states = Self::walk(Rc::clone(&self.nfa), &mut HashSet::new());
+    }
+
+    /// Emulates the regular expression and tries to match `s` against
+    /// it.
+    pub fn emulate(&mut self, s: &str) -> bool {
+        self.reset();
+        loop {
+            if self.idx == s.len() {
+                return self
+                    .states
+                    .iter()
+                    .any(|state| state.borrow().fwd.is_empty());
+            }
+
+            let Some(sch) = s.chars().nth(self.idx) else {
+                return false;
+            };
+
+            let mut visited = HashSet::new();
+            let mut states = Vec::new();
+            for state in &self.states {
+                let Some(ch) = state.borrow().ch else {
                     continue;
                 };
                 if ch != sch {
                     continue;
                 }
-                idx += 1;
-            }
-            if state.fwd.is_empty() {
-                if idx == self.s.len() {
-                    return Some(true);
+                for fwd in &state.borrow().fwd {
+                    states.append(&mut Self::walk(Rc::clone(fwd), &mut visited));
                 }
-                continue;
             }
-            for fwd in &state.fwd {
-                new_states.push((Rc::clone(fwd), idx))
-            }
+            self.states = states;
+            self.idx += 1;
         }
-        self.states = new_states;
-
-        None
     }
 
-    /// Emulates the regular expression.
-    pub fn emulate(&mut self) -> bool {
-        loop {
-            if let Some(res) = self.step() {
-                return res;
-            }
+    /// Walks the NFA looking for character and end nodes.
+    fn walk(state: Rc<RefCell<State>>, visited: &mut HashSet<u64>) -> Vec<Rc<RefCell<State>>> {
+        if visited.contains(&state.borrow().id) {
+            return Vec::new();
         }
+        visited.insert(state.borrow().id);
+
+        if state.borrow().ch.is_some() || state.borrow().fwd.is_empty() {
+            return vec![Rc::clone(&state)];
+        }
+
+        state
+            .borrow()
+            .fwd
+            .iter()
+            .flat_map(|fwd| Self::walk(Rc::clone(fwd), visited))
+            .collect()
     }
 }
 
@@ -551,15 +601,19 @@ mod tests {
             ("a+(b?|c)*d", "accd", true),
             ("a+(b?|c)*d", "cd", false),
             ("a+(b?|c)*d", "bd", false),
-            // ("a+(b?|c)*d", "a", false), // Infinite loop.
+            ("a+(b?|c)*d", "a", false),
             ("(a?)*b", "ab", true),
             ("(a?)*b", "b", true),
-            // ("(a?)*b", "", false), // Infinite loop.
-            // ("(a*)*b", "", false), // Infinite loop.
-            // ("(a?)+b", "", false), // Infinite loop.
-            // ("(a*)+b", "", false), // Infinite loop.
+            ("(a?)*b", "", false),
+            ("(a*)*b", "", false),
+            ("(a?)+b", "", false),
+            ("(a*)+b", "", false),
+            (&("a?".repeat(50) + &"a".repeat(50)), &"a".repeat(50), true),
         ] {
-            assert_eq!(Emulator::new(&parse(&scan(re)).unwrap(), s).emulate(), *res);
+            let tokens = scan(re);
+            let expr = parse(&tokens).unwrap();
+            let mut emu = Emulator::new(&expr).unwrap();
+            assert_eq!(emu.emulate(s), *res);
         }
     }
 }
