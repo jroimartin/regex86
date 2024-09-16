@@ -646,7 +646,7 @@ mod tests {
             let tokens = scan(re);
             let expr = parse(&tokens).unwrap();
             let mut emu = Emulator::from_ast(&expr);
-            assert_eq!(emu.emulate(s), *res);
+            assert_eq!(emu.emulate(s), *res, "matching {re} against {s}");
         }
     }
 }
