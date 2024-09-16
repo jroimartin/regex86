@@ -319,7 +319,7 @@ pub struct Emulator {
 impl Emulator {
     /// Returns a new [`Emulator`] from the provided regular
     /// expression AST.
-    pub fn new(expr: &Expr) -> Result<Emulator, ParsingError> {
+    pub fn new(expr: &Expr) -> Emulator {
         let mut comp = Compiler::default();
         let (nfa, _) = comp.nfa(expr);
         let mut emu = Emulator {
@@ -328,7 +328,7 @@ impl Emulator {
             states: Vec::new(),
         };
         emu.states = Self::walk(nfa, &mut HashSet::new());
-        Ok(emu)
+        emu
     }
 
     /// Resets the internal state of the compiler.
@@ -612,7 +612,7 @@ mod tests {
         ] {
             let tokens = scan(re);
             let expr = parse(&tokens).unwrap();
-            let mut emu = Emulator::new(&expr).unwrap();
+            let mut emu = Emulator::new(&expr);
             assert_eq!(emu.emulate(s), *res);
         }
     }
