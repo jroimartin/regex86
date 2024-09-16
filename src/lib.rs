@@ -261,7 +261,7 @@ pub struct Compiler {
 impl Compiler {
     /// Returns the NFA corresponding to the provided AST.  The
     /// returned tuple is of the form `(start_state, end_state)`.
-    pub fn nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
+    fn nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
         match expr {
             Expr::Alternation { lhs, rhs } => {
                 let split = self.new_state();
@@ -343,7 +343,7 @@ pub struct Emulator {
 impl Emulator {
     /// Returns a new [`Emulator`] from the provided regular
     /// expression AST.
-    pub fn new(expr: &Expr) -> Emulator {
+    pub fn from_ast(expr: &Expr) -> Emulator {
         let mut comp = Compiler::default();
         let (nfa, _) = comp.nfa(expr);
         let mut emu = Emulator {
@@ -353,6 +353,14 @@ impl Emulator {
         };
         emu.states = Self::walk(nfa, &mut HashSet::new());
         emu
+    }
+
+    /// Returns a new [`Emulator`] from the provided regular
+    /// expression.
+    pub fn from_regexp(re: &str) -> Result<Emulator, ParsingError> {
+        let tokens = scan(re);
+        let expr = parse(&tokens)?;
+        Ok(Emulator::from_ast(&expr))
     }
 
     /// Resets the internal state of the compiler.
@@ -636,7 +644,7 @@ mod tests {
         ] {
             let tokens = scan(re);
             let expr = parse(&tokens).unwrap();
-            let mut emu = Emulator::new(&expr);
+            let mut emu = Emulator::from_ast(&expr);
             assert_eq!(emu.emulate(s), *res);
         }
     }

@@ -10,13 +10,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let re = &args[1];
     let s = &args[2];
 
-    let tokens = regex86::scan(re);
-    let expr = regex86::parse(&tokens).map_err(|_| "could not parse regexp")?;
-    let mut emu = regex86::Emulator::new(&expr);
-
+    let mut emu = regex86::Emulator::from_regexp(re).map_err(|_| "parsing error")?;
     if !emu.emulate(s) {
         return Err("no match".into());
     }
-
     Ok(())
 }
