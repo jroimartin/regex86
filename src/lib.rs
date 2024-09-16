@@ -40,7 +40,23 @@ impl From<char> for Token {
     }
 }
 
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Concat => write!(f, "CONCAT"),
+            Token::Star => write!(f, "STAR"),
+            Token::Plus => write!(f, "PLUS"),
+            Token::Question => write!(f, "QUESTION"),
+            Token::Pipe => write!(f, "PIPE"),
+            Token::LeftParen => write!(f, "LEFT_PAREN"),
+            Token::RightParen => write!(f, "RIGHT_PAREN"),
+            Token::Char(ch) => write!(f, "{ch}"),
+        }
+    }
+}
+
 /// Performs the lexical analysis of the provided regular expression.
+/// It returns the token list.
 pub fn scan(regexp: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut chars = regexp.chars().peekable();
@@ -67,6 +83,16 @@ pub enum ParsingError {
     UnmatchedParenthesis,
     UnexpectedToken(Token),
     Eof,
+}
+
+impl fmt::Display for ParsingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParsingError::UnmatchedParenthesis => write!(f, "unmatched parenthesis"),
+            ParsingError::UnexpectedToken(tok) => write!(f, "unexpected token: {tok}"),
+            ParsingError::Eof => write!(f, "EOF"),
+        }
+    }
 }
 
 /// The Abstract Syntax Tree (AST) of a regular expression.
@@ -96,6 +122,18 @@ pub enum Expr {
     Matching(char),
 }
 
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Expr::Alternation { lhs, rhs } => write!(f, "{lhs}|{rhs}"),
+            Expr::Concatenation { lhs, rhs } => write!(f, "{lhs}{rhs}"),
+            Expr::Repetition(expr, op) => write!(f, "{expr}{op}"),
+            Expr::Grouping(expr) => write!(f, "({expr})"),
+            Expr::Matching(ch) => write!(f, "{ch}"),
+        }
+    }
+}
+
 /// Number of times the inner expression of an [`Expr::Repetition`]
 /// expression is repeated.
 #[derive(Debug, PartialEq)]
@@ -111,18 +149,6 @@ impl fmt::Display for Times {
             Times::ZeroOrMore => write!(f, "*"),
             Times::OneOrMore => write!(f, "+"),
             Times::ZeroOrOne => write!(f, "?"),
-        }
-    }
-}
-
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Expr::Alternation { lhs, rhs } => write!(f, "{lhs}|{rhs}"),
-            Expr::Concatenation { lhs, rhs } => write!(f, "{lhs}{rhs}"),
-            Expr::Repetition(expr, op) => write!(f, "{expr}{op}"),
-            Expr::Grouping(expr) => write!(f, "({expr})"),
-            Expr::Matching(ch) => write!(f, "{ch}"),
         }
     }
 }
@@ -215,14 +241,14 @@ impl Parser<'_> {
         }
     }
 
-    /// Matches the next token against the passed token.  In the case
-    /// of a match, it returns true and advances the iterator cursor.
+    /// Compares the next token with `tok`.  In equal, returns true
+    /// and advances the iterator cursor.
     fn check(&mut self, tok: Token) -> bool {
         self.tokens.next_if_eq(&&tok).is_some()
     }
 }
 
-/// A state of the internal non-deterministic finite automata (NFA).
+/// A state of the non-deterministic finite automata (NFA).
 pub struct State {
     /// Unique state identifier.
     id: u64,
@@ -251,6 +277,25 @@ impl State {
     }
 }
 
+/// Compilation error.
+pub enum CompilationError {
+    Parsing(ParsingError),
+}
+
+impl From<ParsingError> for CompilationError {
+    fn from(err: ParsingError) -> CompilationError {
+        CompilationError::Parsing(err)
+    }
+}
+
+impl fmt::Display for CompilationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CompilationError::Parsing(err) => write!(f, "parsing error: {err}"),
+        }
+    }
+}
+
 /// Regular expression compiler.
 #[derive(Default)]
 pub struct Compiler {
@@ -259,6 +304,21 @@ pub struct Compiler {
 }
 
 impl Compiler {
+    /// Compile regular expression AST.
+    pub fn compile_ast(expr: &Expr) -> Result<String, CompilationError> {
+        // TODO: implement function.
+        let mut comp = Compiler::default();
+        let (_nfa, _) = comp.nfa(expr);
+        Ok(format!("TODO: compile {expr}"))
+    }
+
+    /// Compile regular expression.
+    pub fn compile_regexp(regexp: &str) -> Result<String, CompilationError> {
+        let tokens = scan(regexp);
+        let expr = parse(&tokens)?;
+        Self::compile_ast(&expr)
+    }
+
     /// Returns the NFA corresponding to the provided AST.  The
     /// returned tuple is of the form `(start_state, end_state)`.
     fn nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
@@ -328,39 +388,38 @@ impl Compiler {
     }
 }
 
-/// Stores the state of the regular expression emulator.
-pub struct Emulator {
+/// Regular expression.
+pub struct Regexp {
     /// Internal NFA.
     nfa: Rc<RefCell<State>>,
 
     /// Current index in the input string.
     idx: usize,
 
-    /// Current states of the emulator.
+    /// Current states of the internal NFA.
     states: Vec<Rc<RefCell<State>>>,
 }
 
-impl Emulator {
-    /// Returns a new [`Emulator`] from the provided regular
-    /// expression AST.
-    pub fn from_ast(expr: &Expr) -> Emulator {
+impl Regexp {
+    /// Returns a new [`Regexp`] from the provided regular expression
+    /// AST.
+    pub fn from_ast(expr: &Expr) -> Regexp {
         let mut comp = Compiler::default();
         let (nfa, _) = comp.nfa(expr);
-        let mut emu = Emulator {
+        let mut re = Regexp {
             nfa: Rc::clone(&nfa),
             idx: 0,
             states: Vec::new(),
         };
-        emu.states = Self::walk(nfa, &mut HashSet::new());
-        emu
+        re.states = Self::walk(nfa, &mut HashSet::new());
+        re
     }
 
-    /// Returns a new [`Emulator`] from the provided regular
-    /// expression.
-    pub fn from_regexp(re: &str) -> Result<Emulator, ParsingError> {
-        let tokens = scan(re);
+    /// Returns a new [`Regexp`] from the provided regular expression.
+    pub fn from_regexp(regexp: &str) -> Result<Regexp, ParsingError> {
+        let tokens = scan(regexp);
         let expr = parse(&tokens)?;
-        Ok(Emulator::from_ast(&expr))
+        Ok(Regexp::from_ast(&expr))
     }
 
     /// Resets the internal state of the compiler.
@@ -369,19 +428,18 @@ impl Emulator {
         self.states = Self::walk(Rc::clone(&self.nfa), &mut HashSet::new());
     }
 
-    /// Emulates the regular expression and tries to match `s` against
-    /// it.
-    pub fn emulate(&mut self, s: &str) -> bool {
+    /// Returns whether the regular expression matches `text`.
+    pub fn matches(&mut self, text: &str) -> bool {
         self.reset();
         loop {
-            if self.idx == s.chars().count() {
+            if self.idx == text.chars().count() {
                 return self
                     .states
                     .iter()
                     .any(|state| state.borrow().links().is_empty());
             }
 
-            let Some(sch) = s.chars().nth(self.idx) else {
+            let Some(sch) = text.chars().nth(self.idx) else {
                 return false;
             };
 
@@ -589,8 +647,8 @@ mod tests {
     }
 
     #[test]
-    fn emulator_emulate() {
-        for (re, s, res) in &[
+    fn regexp_matches() {
+        for (regexp, text, want) in &[
             ("a", "a", true),
             ("a", "b", false),
             ("abc", "abc", true),
@@ -643,10 +701,8 @@ mod tests {
             (&("a?".repeat(50) + &"a".repeat(50)), &"a".repeat(50), true),
             ("ƒoo", "ƒoo", true),
         ] {
-            let tokens = scan(re);
-            let expr = parse(&tokens).unwrap();
-            let mut emu = Emulator::from_ast(&expr);
-            assert_eq!(emu.emulate(s), *res, "matching {re} against {s}");
+            let mut re = Regexp::from_regexp(regexp).unwrap();
+            assert_eq!(re.matches(text), *want, "matching {regexp} against {text}");
         }
     }
 }
