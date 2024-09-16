@@ -5,7 +5,13 @@
 //! alternation (`|`), then concatenation, and finally the repetition
 //! operators (`*`, `+` and `?`).
 
-use std::{cell::RefCell, collections::HashSet, fmt, iter, rc::Rc, slice, str};
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    fmt, iter,
+    rc::{Rc, Weak},
+    slice, str,
+};
 
 /// Lexical token.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -224,8 +230,25 @@ pub struct State {
     /// Character to match.
     ch: Option<char>,
 
-    /// Links to next states.
+    /// Forward states.
     fwd: Vec<Rc<RefCell<State>>>,
+
+    /// Backward states.
+    bck: Vec<Weak<RefCell<State>>>,
+}
+
+impl State {
+    /// Returns both the forward and the backward links of the state.
+    fn links(&self) -> Vec<Rc<RefCell<State>>> {
+        let mut states = Vec::new();
+        for fwd in &self.fwd {
+            states.push(Rc::clone(fwd));
+        }
+        for bck in &self.bck {
+            states.push(Weak::upgrade(bck).expect("upgrade backward link"));
+        }
+        states
+    }
 }
 
 /// Regular expression compiler.
@@ -257,8 +280,6 @@ impl Compiler {
                 (lhs_start, rhs_end)
             }
             Expr::Repetition(expr, times) => {
-                // FIXME: Memory leak due to circular dependency?
-                // Should I use std::rc::Weak for back links?
                 let (expr_start, expr_end) = self.nfa(expr);
                 let join = self.new_state();
                 match times {
@@ -271,11 +292,13 @@ impl Compiler {
                     Times::ZeroOrMore => {
                         let split = self.new_state();
                         split.borrow_mut().fwd = vec![expr_start, Rc::clone(&join)];
-                        expr_end.borrow_mut().fwd = vec![Rc::clone(&join), Rc::clone(&split)];
+                        expr_end.borrow_mut().fwd = vec![Rc::clone(&join)];
+                        expr_end.borrow_mut().bck = vec![Rc::downgrade(&split)];
                         (split, join)
                     }
                     Times::OneOrMore => {
-                        expr_end.borrow_mut().fwd = vec![Rc::clone(&join), Rc::clone(&expr_start)];
+                        expr_end.borrow_mut().fwd = vec![Rc::clone(&join)];
+                        expr_end.borrow_mut().bck = vec![Rc::downgrade(&expr_start)];
                         (expr_start, join)
                     }
                 }
@@ -298,6 +321,7 @@ impl Compiler {
             id: self.next_state_id,
             ch: None,
             fwd: Vec::new(),
+            bck: Vec::new(),
         }));
         self.next_state_id += 1;
         state
@@ -346,7 +370,7 @@ impl Emulator {
                 return self
                     .states
                     .iter()
-                    .any(|state| state.borrow().fwd.is_empty());
+                    .any(|state| state.borrow().links().is_empty());
             }
 
             let Some(sch) = s.chars().nth(self.idx) else {
@@ -362,8 +386,8 @@ impl Emulator {
                 if ch != sch {
                     continue;
                 }
-                for fwd in &state.borrow().fwd {
-                    states.append(&mut Self::walk(Rc::clone(fwd), &mut visited));
+                for lnk in state.borrow().links() {
+                    states.append(&mut Self::walk(Rc::clone(&lnk), &mut visited));
                 }
             }
             self.states = states;
@@ -378,15 +402,15 @@ impl Emulator {
         }
         visited.insert(state.borrow().id);
 
-        if state.borrow().ch.is_some() || state.borrow().fwd.is_empty() {
+        if state.borrow().ch.is_some() || state.borrow().links().is_empty() {
             return vec![Rc::clone(&state)];
         }
 
         state
             .borrow()
-            .fwd
+            .links()
             .iter()
-            .flat_map(|fwd| Self::walk(Rc::clone(fwd), visited))
+            .flat_map(|lnk| Self::walk(Rc::clone(lnk), visited))
             .collect()
     }
 }
