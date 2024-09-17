@@ -79,6 +79,25 @@ impl Display for Token {
 
 /// Performs the lexical analysis of the provided regular expression.
 /// It returns the token list.
+///
+/// ```
+/// use regex86::{scan, Token};
+///
+/// let tokens = scan("(a|b)+c");
+/// assert_eq!(
+///     &tokens,
+///     &[
+///         Token::LeftParen,
+///         Token::Char('a'),
+///         Token::Pipe,
+///         Token::Char('b'),
+///         Token::RightParen,
+///         Token::Plus,
+///         Token::Concat,
+///         Token::Char('c')
+///     ]
+/// );
+/// ```
 pub fn scan(regexp: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut chars = regexp.chars().peekable();
@@ -159,6 +178,23 @@ impl Display for Times {
 
 /// Performs the syntactic analysis of the provided tokens.  It
 /// returns the parsed AST.
+///
+/// ```
+/// use regex86::{parse, scan, Expr, Times};
+///
+/// let tokens = scan("a*b");
+/// let ast = parse(&tokens).unwrap();
+/// assert_eq!(
+///     ast,
+///     Expr::Concatenation {
+///         lhs: Box::new(Expr::Repetition(
+///             Box::new(Expr::Matching('a')),
+///             Times::ZeroOrMore
+///         )),
+///         rhs: Box::new(Expr::Matching('b')),
+///     }
+/// );
+/// ```
 pub fn parse(tokens: &[Token]) -> Result<Expr> {
     Parser::parse(tokens)
 }
@@ -414,6 +450,15 @@ impl Regexp {
     }
 
     /// Returns whether the regular expression matches `text`.
+    ///
+    /// ```
+    /// use regex86::Regexp;
+    ///
+    /// let mut re = Regexp::from_regexp("(a|b)+c").unwrap();
+    /// assert_eq!(re.matches("aac"), true);
+    /// assert_eq!(re.matches("bc"), true);
+    /// assert_eq!(re.matches("c"), false);
+    /// ```
     pub fn matches(&mut self, text: &str) -> bool {
         self.reset();
         loop {
