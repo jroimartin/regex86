@@ -8,10 +8,32 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
-    fmt, iter,
+    fmt::{self, Display, Formatter},
+    iter::Peekable,
     rc::{Rc, Weak},
-    slice, str,
+    result, slice,
 };
+
+/// Regular expression result.
+type Result<T> = result::Result<T, Error>;
+
+/// Regular expression error.
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    UnmatchedParenthesis,
+    UnexpectedToken(Token),
+    Eof,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::UnmatchedParenthesis => write!(f, "unmatched parenthesis"),
+            Error::UnexpectedToken(tok) => write!(f, "unexpected token: {tok}"),
+            Error::Eof => write!(f, "EOF"),
+        }
+    }
+}
 
 /// Lexical token.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -40,8 +62,8 @@ impl From<char> for Token {
     }
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Token::Concat => write!(f, "CONCAT"),
             Token::Star => write!(f, "STAR"),
@@ -77,24 +99,6 @@ pub fn scan(regexp: &str) -> Vec<Token> {
     tokens
 }
 
-/// Parsing error.
-#[derive(Debug, PartialEq)]
-pub enum ParsingError {
-    UnmatchedParenthesis,
-    UnexpectedToken(Token),
-    Eof,
-}
-
-impl fmt::Display for ParsingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParsingError::UnmatchedParenthesis => write!(f, "unmatched parenthesis"),
-            ParsingError::UnexpectedToken(tok) => write!(f, "unexpected token: {tok}"),
-            ParsingError::Eof => write!(f, "EOF"),
-        }
-    }
-}
-
 /// The Abstract Syntax Tree (AST) of a regular expression.
 ///
 /// Implements the following grammar (from weakest to strongest
@@ -122,8 +126,8 @@ pub enum Expr {
     Matching(char),
 }
 
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Expr::Alternation { lhs, rhs } => write!(f, "{lhs}|{rhs}"),
             Expr::Concatenation { lhs, rhs } => write!(f, "{lhs}{rhs}"),
@@ -143,8 +147,8 @@ pub enum Times {
     ZeroOrOne,
 }
 
-impl fmt::Display for Times {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for Times {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Times::ZeroOrMore => write!(f, "*"),
             Times::OneOrMore => write!(f, "+"),
@@ -155,32 +159,32 @@ impl fmt::Display for Times {
 
 /// Performs the syntactic analysis of the provided tokens.  It
 /// returns the parsed AST.
-pub fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
+pub fn parse(tokens: &[Token]) -> Result<Expr> {
     Parser::parse(tokens)
 }
 
 /// Regular expression parser.
 struct Parser<'a> {
     /// Token peekable iterator.
-    tokens: iter::Peekable<slice::Iter<'a, Token>>,
+    tokens: Peekable<slice::Iter<'a, Token>>,
 }
 
 impl Parser<'_> {
     /// Performs the syntactic analysis of the provided tokens.  It
     /// returns the parsed AST.
-    fn parse(tokens: &[Token]) -> Result<Expr, ParsingError> {
+    fn parse(tokens: &[Token]) -> Result<Expr> {
         let mut parser = Parser {
             tokens: tokens.iter().peekable(),
         };
         let expr = parser.parse_alternation()?;
         match parser.tokens.next() {
-            Some(tok) => Err(ParsingError::UnexpectedToken(*tok)),
+            Some(tok) => Err(Error::UnexpectedToken(*tok)),
             None => Ok(expr),
         }
     }
 
     /// Parses an alternation expression.
-    fn parse_alternation(&mut self) -> Result<Expr, ParsingError> {
+    fn parse_alternation(&mut self) -> Result<Expr> {
         let mut expr = self.parse_concatenation()?;
         while self.check(Token::Pipe) {
             let rhs = self.parse_concatenation()?;
@@ -193,7 +197,7 @@ impl Parser<'_> {
     }
 
     /// Parses a concatenation expression.
-    fn parse_concatenation(&mut self) -> Result<Expr, ParsingError> {
+    fn parse_concatenation(&mut self) -> Result<Expr> {
         let mut expr = self.parse_repetition()?;
         while self.check(Token::Concat) {
             let rhs = self.parse_repetition()?;
@@ -206,7 +210,7 @@ impl Parser<'_> {
     }
 
     /// Parses a repetition expression.
-    fn parse_repetition(&mut self) -> Result<Expr, ParsingError> {
+    fn parse_repetition(&mut self) -> Result<Expr> {
         let expr = self.parse_grouping()?;
         if self.check(Token::Star) {
             return Ok(Expr::Repetition(Box::new(expr), Times::ZeroOrMore));
@@ -221,23 +225,23 @@ impl Parser<'_> {
     }
 
     /// Parses a grouping expression.
-    fn parse_grouping(&mut self) -> Result<Expr, ParsingError> {
+    fn parse_grouping(&mut self) -> Result<Expr> {
         if self.check(Token::LeftParen) {
             let expr = self.parse_alternation()?;
             return match self.tokens.next() {
                 Some(Token::RightParen) => Ok(Expr::Grouping(Box::new(expr))),
-                _ => Err(ParsingError::UnmatchedParenthesis),
+                _ => Err(Error::UnmatchedParenthesis),
             };
         }
         self.parse_matching()
     }
 
     /// Parses a matching expression.
-    fn parse_matching(&mut self) -> Result<Expr, ParsingError> {
+    fn parse_matching(&mut self) -> Result<Expr> {
         match self.tokens.next() {
             Some(Token::Char(ch)) => Ok(Expr::Matching(*ch)),
-            Some(tok) => Err(ParsingError::UnexpectedToken(*tok)),
-            None => Err(ParsingError::Eof),
+            Some(tok) => Err(Error::UnexpectedToken(*tok)),
+            None => Err(Error::Eof),
         }
     }
 
@@ -277,25 +281,6 @@ impl State {
     }
 }
 
-/// Compilation error.
-pub enum CompilationError {
-    Parsing(ParsingError),
-}
-
-impl From<ParsingError> for CompilationError {
-    fn from(err: ParsingError) -> CompilationError {
-        CompilationError::Parsing(err)
-    }
-}
-
-impl fmt::Display for CompilationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CompilationError::Parsing(err) => write!(f, "parsing error: {err}"),
-        }
-    }
-}
-
 /// Regular expression compiler.
 #[derive(Default)]
 pub struct Compiler {
@@ -305,7 +290,7 @@ pub struct Compiler {
 
 impl Compiler {
     /// Compile regular expression AST.
-    pub fn compile_ast(expr: &Expr) -> Result<String, CompilationError> {
+    pub fn compile_ast(expr: &Expr) -> Result<String> {
         // TODO: implement function.
         let mut comp = Compiler::default();
         let (_nfa, _) = comp.nfa(expr);
@@ -313,7 +298,7 @@ impl Compiler {
     }
 
     /// Compile regular expression.
-    pub fn compile_regexp(regexp: &str) -> Result<String, CompilationError> {
+    pub fn compile_regexp(regexp: &str) -> Result<String> {
         let tokens = scan(regexp);
         let expr = parse(&tokens)?;
         Self::compile_ast(&expr)
@@ -416,7 +401,7 @@ impl Regexp {
     }
 
     /// Returns a new [`Regexp`] from the provided regular expression.
-    pub fn from_regexp(regexp: &str) -> Result<Regexp, ParsingError> {
+    pub fn from_regexp(regexp: &str) -> Result<Regexp> {
         let tokens = scan(regexp);
         let expr = parse(&tokens)?;
         Ok(Regexp::from_ast(&expr))
@@ -611,31 +596,25 @@ mod tests {
 
     #[test]
     fn parse_error_unmatched_parenthesis() {
-        assert_eq!(
-            parse(&scan("((a|b)|c")),
-            Err(ParsingError::UnmatchedParenthesis)
-        );
+        assert_eq!(parse(&scan("((a|b)|c")), Err(Error::UnmatchedParenthesis));
     }
 
     #[test]
     fn parse_error_not_quantifiable() {
         assert_eq!(
             parse(&scan("a++")),
-            Err(ParsingError::UnexpectedToken(Token::Plus))
+            Err(Error::UnexpectedToken(Token::Plus))
         );
     }
 
     #[test]
     fn parse_error_unexpected_token() {
-        assert_eq!(
-            parse(&scan("|a")),
-            Err(ParsingError::UnexpectedToken(Token::Pipe))
-        );
+        assert_eq!(parse(&scan("|a")), Err(Error::UnexpectedToken(Token::Pipe)));
     }
 
     #[test]
     fn parse_error_eof() {
-        assert_eq!(parse(&scan("a|")), Err(ParsingError::Eof));
+        assert_eq!(parse(&scan("a|")), Err(Error::Eof));
     }
 
     #[test]

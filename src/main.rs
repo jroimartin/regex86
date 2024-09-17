@@ -1,20 +1,17 @@
 //! Regexp compiler for x86.
 
-use std::fmt;
+use std::fmt::{self, Debug, Display, Formatter};
 
 use clap::{Parser, Subcommand};
-use regex86::{CompilationError, Compiler, ParsingError, Regexp};
+use regex86::{self, Compiler, Regexp};
 
 /// CLI error.
 enum CliError {
     /// Generic error.
     Str(String),
 
-    /// Parsing error.
-    Parsing(ParsingError),
-
-    /// Compilation error.
-    Compilation(CompilationError),
+    /// Regular expression error.
+    Regexp(regex86::Error),
 }
 
 impl From<&str> for CliError {
@@ -23,30 +20,23 @@ impl From<&str> for CliError {
     }
 }
 
-impl From<ParsingError> for CliError {
-    fn from(err: ParsingError) -> CliError {
-        CliError::Parsing(err)
+impl From<regex86::Error> for CliError {
+    fn from(err: regex86::Error) -> CliError {
+        CliError::Regexp(err)
     }
 }
 
-impl From<CompilationError> for CliError {
-    fn from(err: CompilationError) -> CliError {
-        CliError::Compilation(err)
-    }
-}
-
-impl fmt::Display for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for CliError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             CliError::Str(s) => write!(f, "{s}"),
-            CliError::Parsing(err) => write!(f, "parsing error: {err}"),
-            CliError::Compilation(err) => write!(f, "compilation error: {err}"),
+            CliError::Regexp(err) => write!(f, "regular expression error: {err}"),
         }
     }
 }
 
-impl fmt::Debug for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Debug for CliError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{self}")
     }
 }
