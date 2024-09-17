@@ -85,8 +85,8 @@ impl Display for Token {
 ///
 /// let tokens = scan("(a|b)+c");
 /// assert_eq!(
-///     &tokens,
-///     &[
+///     tokens,
+///     [
 ///         Token::LeftParen,
 ///         Token::Char('a'),
 ///         Token::Pipe,
