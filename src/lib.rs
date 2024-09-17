@@ -427,6 +427,15 @@ pub struct Regexp {
 impl Regexp {
     /// Returns a new [`Regexp`] from the provided regular expression
     /// AST.
+    ///
+    /// ```
+    /// use regex86::{parse, scan, Regexp};
+    ///
+    /// let tokens = scan("(a|b)+c");
+    /// let ast = parse(&tokens).unwrap();
+    ///
+    /// let re = Regexp::from_ast(&ast);
+    /// ```
     pub fn from_ast(expr: &Expr) -> Regexp {
         let mut comp = Compiler::default();
         let (nfa, _) = comp.nfa(expr);
@@ -440,6 +449,16 @@ impl Regexp {
     }
 
     /// Returns a new [`Regexp`] from the provided regular expression.
+    ///
+    /// ```
+    /// use regex86::Regexp;
+    ///
+    /// let re = Regexp::from_regexp("(a|b)+c");
+    /// assert!(re.is_ok());
+    ///
+    /// let re = Regexp::from_regexp("(a");
+    /// assert!(re.is_err());
+    /// ```
     pub fn from_regexp(regexp: &str) -> Result<Regexp> {
         let tokens = scan(regexp);
         let expr = parse(&tokens)?;
