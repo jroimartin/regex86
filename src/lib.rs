@@ -15,7 +15,7 @@ use std::{
 };
 
 /// Regular expression result.
-type Result<T> = result::Result<T, Error>;
+pub type Result<T> = result::Result<T, Error>;
 
 /// Regular expression error.
 #[derive(Debug, PartialEq)]
