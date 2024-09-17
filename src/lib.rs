@@ -249,7 +249,7 @@ impl Parser<'_> {
 }
 
 /// A state of the non-deterministic finite automata (NFA).
-pub struct State {
+struct State {
     /// Unique state identifier.
     id: u64,
 
