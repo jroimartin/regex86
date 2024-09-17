@@ -194,6 +194,9 @@ impl Display for Times {
 ///         rhs: Box::new(Expr::Matching('b')),
 ///     }
 /// );
+///
+/// let tokens = scan("(a");
+/// assert!(parse(&tokens).is_err());
 /// ```
 pub fn parse(tokens: &[Token]) -> Result<Expr> {
     Parser::parse(tokens)
