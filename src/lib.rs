@@ -20,8 +20,13 @@ pub type Result<T> = result::Result<T, Error>;
 /// Regular expression error.
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    /// Unmatched parenthesis.
     UnmatchedParenthesis,
+
+    /// Unexpected token.
     UnexpectedToken(Token),
+
+    /// Premature end of the regular expression.
     Eof,
 }
 
@@ -38,13 +43,29 @@ impl Display for Error {
 /// Lexical token.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Token {
+    /// Synthetic token that denotes the concatenation of two adjacent
+    /// expressions.
     Concat,
+
+    /// Star token (`*`).
     Star,
+
+    /// Plus token. (`+`).
     Plus,
+
+    /// Question mark token (`?`).
     Question,
+
+    /// Pipe token (`|`).
     Pipe,
+
+    /// Left parenthesis token (`(`).
     LeftParen,
+
+    /// Right parenthesis token (`)`).
     RightParen,
+
+    /// Character token.
     Char(char),
 }
 
@@ -138,10 +159,19 @@ pub fn scan(regexp: &str) -> Vec<Token> {
 /// lexical scanner to represent two adjacent expressions.
 #[derive(Debug, PartialEq)]
 pub enum Expr {
+    /// Alternation expression.  E.g. `a|b`.
     Alternation { lhs: Box<Expr>, rhs: Box<Expr> },
+
+    /// Concatenation expression.  E.g. `ab`.
     Concatenation { lhs: Box<Expr>, rhs: Box<Expr> },
+
+    /// Repetition expression.  E.g. `a*`.
     Repetition(Box<Expr>, Times),
+
+    /// Grouping expression.  E.g. `(a)`.
     Grouping(Box<Expr>),
+
+    /// Character matching expression. E.g. `a`.
     Matching(char),
 }
 
@@ -161,8 +191,13 @@ impl Display for Expr {
 /// expression is repeated.
 #[derive(Debug, PartialEq)]
 pub enum Times {
+    /// Zero or more.
     ZeroOrMore,
+
+    /// One or more.
     OneOrMore,
+
+    /// Zero or one.
     ZeroOrOne,
 }
 
