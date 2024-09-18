@@ -439,13 +439,11 @@ impl Regexp {
     pub fn from_ast(expr: &Expr) -> Regexp {
         let mut comp = Compiler::default();
         let (nfa, _) = comp.nfa(expr);
-        let mut re = Regexp {
-            nfa: Rc::clone(&nfa),
+        Regexp {
+            nfa,
             idx: 0,
             states: Vec::new(),
-        };
-        re.states = Self::walk(nfa, &mut HashSet::new());
-        re
+        }
     }
 
     /// Returns a new [`Regexp`] from the provided regular expression.
@@ -465,7 +463,7 @@ impl Regexp {
         Ok(Regexp::from_ast(&expr))
     }
 
-    /// Resets the internal state of the compiler.
+    /// Resets the internal state of the regular expression.
     fn reset(&mut self) {
         self.idx = 0;
         self.states = Self::walk(Rc::clone(&self.nfa), &mut HashSet::new());
