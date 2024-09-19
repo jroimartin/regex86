@@ -81,7 +81,7 @@ fn main() -> Result<(), CliError> {
             }
         }
         Command::Compile { regexp } => {
-            let code = Compiler::compile_regexp(&regexp)?;
+            let code = Compiler::compile_str(&regexp)?;
             print!("{code}");
         }
     }

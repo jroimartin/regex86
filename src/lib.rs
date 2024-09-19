@@ -15,6 +15,8 @@ use std::{
     str::FromStr,
 };
 
+mod asm;
+
 /// Regular expression result.
 pub type Result<T> = result::Result<T, Error>;
 
@@ -172,7 +174,7 @@ pub enum Expr {
     /// Grouping expression.  E.g. `(a)`.
     Grouping(Box<Expr>),
 
-    /// Character matching expression. E.g. `a`.
+    /// Character matching expression.  E.g. `a`.
     Matching(char),
 }
 
@@ -364,42 +366,186 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    /// Compile regular expression AST.
-    pub fn compile_ast(expr: &Expr) -> Result<String> {
-        // TODO: implement function.
-        let mut _comp = Compiler::default();
-        Ok(format!("TODO: compile {expr}"))
+    /// Compile regular expression.
+    ///
+    /// The generated code targets ELF64 for x86_64 GNU/Linux.  It can
+    /// be compiled using [nasm]:
+    ///
+    /// ```text
+    /// nasm -o regexp.o -f elf64 regexp.asm
+    /// ld -o regexp regexp.o
+    /// ````
+    ///
+    /// [nasm]: https://nasm.us/
+    pub fn compile_str(s: &str) -> Result<String> {
+        let tokens = scan(s);
+        let expr = parse(&tokens)?;
+        Ok(Compiler::compile_ast(&expr))
     }
 
-    /// Compile regular expression.
-    pub fn compile_regexp(regexp: &str) -> Result<String> {
-        let tokens = scan(regexp);
-        let expr = parse(&tokens)?;
-        Self::compile_ast(&expr)
+    /// Compile regular expression AST.
+    ///
+    /// See [`Compiler::compile_str`] for more details.
+    pub fn compile_ast(expr: &Expr) -> String {
+        let mut comp = Compiler::default();
+        let (code, _) = comp.build_asm(expr);
+        asm::PRELUDE.to_string() + &code
+    }
+
+    /// Returns the assembly code corresponding to the provided AST.
+    /// It returns `(code, state_id)`.
+    fn build_asm(&mut self, expr: &Expr) -> (String, u64) {
+        let id = self.next_state_id();
+        let code = match expr {
+            Expr::Alternation { lhs, rhs } => {
+                let (lhs_code, lhs_id) = self.build_asm(lhs);
+                let (rhs_code, rhs_id) = self.build_asm(rhs);
+                format!(
+                    r#"
+                        e{id}:
+                                push r12
+                                mov r12, rdi
+                                call e{lhs_id}
+                                cmp rax, 0
+                                je .out
+                                mov rdi, r12
+                                call e{rhs_id}
+                        .out:
+                                pop r12
+                                ret
+
+                        {lhs_code}
+
+                        {rhs_code}
+                    "#
+                )
+            }
+            Expr::Concatenation { lhs, rhs } => {
+                let (lhs_code, lhs_id) = self.build_asm(lhs);
+                let (rhs_code, rhs_id) = self.build_asm(rhs);
+                format!(
+                    r#"
+                        e{id}:
+                                call e{lhs_id}
+                                cmp rax, 0
+                                jne .out
+                                call e{rhs_id}
+                        .out:
+                                ret
+
+                        {lhs_code}
+
+                        {rhs_code}
+                    "#
+                )
+            }
+            Expr::Repetition(expr, times) => {
+                let (expr_code, expr_id) = self.build_asm(expr);
+                match times {
+                    Times::ZeroOrMore => format!(
+                        r#"
+                        e{id}:
+                                push r12
+                        .loop:
+                                mov r12, rdi
+                                call e{expr_id}
+                                cmp rax, 0
+                                je .loop
+                                mov rdi, r12
+                                mov rax, 0
+                        .out:
+                                pop r12
+                                ret
+
+                        {expr_code}
+                        "#
+                    ),
+                    Times::OneOrMore => format!(
+                        r#"
+                        e{id}:
+                                push r12
+                                call e{expr_id}
+                                cmp rax, 0
+                                jne .out
+                        .loop:
+                                mov r12, rdi
+                                call e{expr_id}
+                                cmp rax, 0
+                                je .loop
+                                mov rdi, r12
+                                mov rax, 0
+                        .out:
+                                pop r12
+                                ret
+
+                        {expr_code}
+                        "#
+                    ),
+                    Times::ZeroOrOne => format!(
+                        r#"
+                        e{id}:
+                                push r12
+                                mov r12, rdi
+                                call e{expr_id}
+                                cmp rax, 0
+                                je .out
+                                mov rdi, r12
+                                mov rax, 0
+                        .out:
+                                pop r12
+                                ret
+
+                        {expr_code}
+                        "#
+                    ),
+                }
+            }
+            Expr::Grouping(expr) => return self.build_asm(expr),
+            Expr::Matching(ch) => {
+                format!(
+                    r#"
+                        e{id}:
+                                push r12
+                                mov r12b, [rdi]
+                                cmp r12b, '{ch}'
+                                je .match
+                                mov rax, 1
+                                jmp .out
+                        .match:
+                                inc rdi
+                                mov rax, 0
+                        .out:
+                                pop r12
+                                ret
+                    "#
+                )
+            }
+        };
+        (code, id)
     }
 
     /// Returns the NFA corresponding to the provided AST.  The
     /// returned tuple is of the form `(start_state, end_state)`.
-    fn nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
+    fn build_nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
         match expr {
             Expr::Alternation { lhs, rhs } => {
                 let split = self.new_state();
                 let join = self.new_state();
-                let (lhs_start, lhs_end) = self.nfa(lhs);
-                let (rhs_start, rhs_end) = self.nfa(rhs);
+                let (lhs_start, lhs_end) = self.build_nfa(lhs);
+                let (rhs_start, rhs_end) = self.build_nfa(rhs);
                 split.borrow_mut().fwd = vec![lhs_start, rhs_start];
                 lhs_end.borrow_mut().fwd = vec![Rc::clone(&join)];
                 rhs_end.borrow_mut().fwd = vec![Rc::clone(&join)];
                 (split, join)
             }
             Expr::Concatenation { lhs, rhs } => {
-                let (lhs_start, lhs_end) = self.nfa(lhs);
-                let (rhs_start, rhs_end) = self.nfa(rhs);
+                let (lhs_start, lhs_end) = self.build_nfa(lhs);
+                let (rhs_start, rhs_end) = self.build_nfa(rhs);
                 lhs_end.borrow_mut().fwd = vec![rhs_start];
                 (lhs_start, rhs_end)
             }
             Expr::Repetition(expr, times) => {
-                let (expr_start, expr_end) = self.nfa(expr);
+                let (expr_start, expr_end) = self.build_nfa(expr);
                 let join = self.new_state();
                 match times {
                     Times::ZeroOrOne => {
@@ -422,7 +568,7 @@ impl Compiler {
                     }
                 }
             }
-            Expr::Grouping(expr) => self.nfa(expr),
+            Expr::Grouping(expr) => self.build_nfa(expr),
             Expr::Matching(ch) => {
                 let expr = self.new_state();
                 let end = self.new_state();
@@ -436,14 +582,19 @@ impl Compiler {
     /// Returns a new [`State`].  Every generated state has a unique
     /// identifier.
     fn new_state(&mut self) -> Rc<RefCell<State>> {
-        let state = Rc::new(RefCell::new(State {
-            id: self.next_state_id,
+        Rc::new(RefCell::new(State {
+            id: self.next_state_id(),
             ch: None,
             fwd: Vec::new(),
             bck: Vec::new(),
-        }));
+        }))
+    }
+
+    /// Returns the next unique state ID.
+    fn next_state_id(&mut self) -> u64 {
+        let id = self.next_state_id;
         self.next_state_id += 1;
-        state
+        id
     }
 }
 
@@ -496,7 +647,7 @@ impl Regexp {
     /// ```
     pub fn from_ast(expr: &Expr) -> Regexp {
         let mut comp = Compiler::default();
-        let (nfa, _) = comp.nfa(expr);
+        let (nfa, _) = comp.build_nfa(expr);
         Regexp {
             nfa,
             idx: 0,
@@ -507,7 +658,7 @@ impl Regexp {
     /// Resets the internal state of the regular expression.
     fn reset(&mut self) {
         self.idx = 0;
-        self.states = Self::walk(Rc::clone(&self.nfa), &mut HashSet::new());
+        self.states = Regexp::walk(Rc::clone(&self.nfa), &mut HashSet::new());
     }
 
     /// Returns whether the regular expression matches `text`.
@@ -546,7 +697,7 @@ impl Regexp {
                     continue;
                 }
                 for lnk in state.borrow().links() {
-                    states.append(&mut Self::walk(Rc::clone(&lnk), &mut visited));
+                    states.append(&mut Regexp::walk(Rc::clone(&lnk), &mut visited));
                 }
             }
             self.states = states;
@@ -569,7 +720,7 @@ impl Regexp {
             .borrow()
             .links()
             .iter()
-            .flat_map(|lnk| Self::walk(Rc::clone(lnk), visited))
+            .flat_map(|lnk| Regexp::walk(Rc::clone(lnk), visited))
             .collect()
     }
 }
