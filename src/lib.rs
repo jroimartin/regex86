@@ -395,6 +395,9 @@ impl Compiler {
     /// Returns the assembly code corresponding to the provided AST.
     /// It returns `(code, state_id)`.
     fn build_asm(&mut self, expr: &Expr) -> (String, u64) {
+        // FIXME: fix the following cases:
+        //   - `a*a` against `a` returns no match.
+        //   - `(a?)*b` against `` enters infinite loop.
         let id = self.next_state_id();
         let code = match expr {
             Expr::Alternation { lhs, rhs } => {
