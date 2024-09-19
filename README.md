@@ -1,5 +1,8 @@
 # regex86
 
+**DISCLAIMER:** This is a toy implementation created for learning
+purposes.
+
 Regexp compiler for x86.
 
 The only supported metacharacters are `* + ? | ( )`.  Their
