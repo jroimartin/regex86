@@ -1,6 +1,9 @@
 //! Regexp compiler for x86.
 
-use std::fmt::{self, Debug, Display, Formatter};
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    str::FromStr,
+};
 
 use clap::{Parser, Subcommand};
 use regex86::{self, Compiler, Regexp};
@@ -72,7 +75,7 @@ fn main() -> Result<(), CliError> {
     let cli = Cli::parse();
     match cli.command {
         Command::Match { regexp, text } => {
-            let mut re = Regexp::from_regexp(&regexp)?;
+            let mut re = Regexp::from_str(&regexp)?;
             if !re.matches(&text) {
                 return Err("no match".into());
             }

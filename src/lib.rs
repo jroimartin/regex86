@@ -12,6 +12,7 @@ use std::{
     iter::Peekable,
     rc::{Rc, Weak},
     result, slice,
+    str::FromStr,
 };
 
 /// Regular expression result.
@@ -366,8 +367,7 @@ impl Compiler {
     /// Compile regular expression AST.
     pub fn compile_ast(expr: &Expr) -> Result<String> {
         // TODO: implement function.
-        let mut comp = Compiler::default();
-        let (_nfa, _) = comp.nfa(expr);
+        let mut _comp = Compiler::default();
         Ok(format!("TODO: compile {expr}"))
     }
 
@@ -459,6 +459,29 @@ pub struct Regexp {
     states: Vec<Rc<RefCell<State>>>,
 }
 
+impl FromStr for Regexp {
+    type Err = Error;
+
+    /// Returns a new [`Regexp`] from the provided regular expression.
+    ///
+    /// ```
+    /// use std::str::FromStr;
+    ///
+    /// use regex86::Regexp;
+    ///
+    /// let re = Regexp::from_str("(a|b)+c");
+    /// assert!(re.is_ok());
+    ///
+    /// let re = Regexp::from_str("(a");
+    /// assert!(re.is_err());
+    /// ```
+    fn from_str(s: &str) -> Result<Regexp> {
+        let tokens = scan(s);
+        let expr = parse(&tokens)?;
+        Ok(Regexp::from_ast(&expr))
+    }
+}
+
 impl Regexp {
     /// Returns a new [`Regexp`] from the provided regular expression
     /// AST.
@@ -481,23 +504,6 @@ impl Regexp {
         }
     }
 
-    /// Returns a new [`Regexp`] from the provided regular expression.
-    ///
-    /// ```
-    /// use regex86::Regexp;
-    ///
-    /// let re = Regexp::from_regexp("(a|b)+c");
-    /// assert!(re.is_ok());
-    ///
-    /// let re = Regexp::from_regexp("(a");
-    /// assert!(re.is_err());
-    /// ```
-    pub fn from_regexp(regexp: &str) -> Result<Regexp> {
-        let tokens = scan(regexp);
-        let expr = parse(&tokens)?;
-        Ok(Regexp::from_ast(&expr))
-    }
-
     /// Resets the internal state of the regular expression.
     fn reset(&mut self) {
         self.idx = 0;
@@ -507,9 +513,11 @@ impl Regexp {
     /// Returns whether the regular expression matches `text`.
     ///
     /// ```
+    /// use std::str::FromStr;
+    ///
     /// use regex86::Regexp;
     ///
-    /// let mut re = Regexp::from_regexp("(a|b)+c").unwrap();
+    /// let mut re = Regexp::from_str("(a|b)+c").unwrap();
     /// assert_eq!(re.matches("aac"), true);
     /// assert_eq!(re.matches("bc"), true);
     /// assert_eq!(re.matches("c"), false);
@@ -780,7 +788,7 @@ mod tests {
             (&("a?".repeat(50) + &"a".repeat(50)), &"a".repeat(50), true),
             ("ƒoo", "ƒoo", true),
         ] {
-            let mut re = Regexp::from_regexp(regexp).unwrap();
+            let mut re = Regexp::from_str(regexp).unwrap();
             assert_eq!(re.matches(text), *want, "matching {regexp} against {text}");
         }
     }

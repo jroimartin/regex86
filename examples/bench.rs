@@ -6,7 +6,7 @@
 //! **n** denote string repetition, so that a?**3**a**3** is shorthand
 //! for a?a?a?aaa.
 
-use std::time::Instant;
+use std::{str::FromStr, time::Instant};
 
 use regex86::Regexp;
 
@@ -17,7 +17,7 @@ fn main() {
     for n in 1..=N {
         let regexp = "a?".repeat(n) + &"a".repeat(n);
         let text = "a".repeat(n);
-        let mut re = Regexp::from_regexp(&regexp).unwrap();
+        let mut re = Regexp::from_str(&regexp).unwrap();
 
         let now = Instant::now();
         for _ in 0..SAMPLES {
