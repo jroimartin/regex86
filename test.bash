@@ -64,14 +64,14 @@ TESTS=(
 
 tempdir=$(mktemp -d)
 
-cargo build --release
+cargo build
 
 for t in ${TESTS[@]}; do
 	regexp=$(echo "${t}" | cut -d ',' -f 1)
 	text=$(echo "${t}" | cut -d ',' -f 2)
 	code=$(echo "${t}" | cut -d ',' -f 3)
 
-	./target/release/regex86 compile "${regexp}" > "${tempdir}/out.asm"
+	./target/debug/regex86 compile "${regexp}" > "${tempdir}/out.asm"
 	nasm -f elf64 -o "${tempdir}/out.o" "${tempdir}/out.asm"
 	ld -o "${tempdir}/out" "${tempdir}/out.o"
 
