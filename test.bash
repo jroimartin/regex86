@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Tests for `regex86 compile`.
+# Tests for regex86 binary.
 
 cd "$(dirname "$0")"
 
@@ -62,22 +62,62 @@ TESTS=(
         # '(a*)+b,,1'
 )
 
-tempdir=$(mktemp -d)
-
-cargo build
-
-for t in ${TESTS[@]}; do
-	regexp=$(echo "${t}" | cut -d ',' -f 1)
-	text=$(echo "${t}" | cut -d ',' -f 2)
-	code=$(echo "${t}" | cut -d ',' -f 3)
+cmd_compile() {
+	local regexp=$1
+	local text=$2
+	local tmpdir=$3
 
 	./target/debug/regex86 compile "${regexp}" > "${tempdir}/out.asm"
 	nasm -f elf64 -o "${tempdir}/out.o" "${tempdir}/out.asm"
 	ld -o "${tempdir}/out" "${tempdir}/out.o"
-
 	"${tempdir}/out" "${text}"
-	if [[ $? != $code ]]; then
-		echo "error matching ${regexp} against ${text}" >&2
-		exit 1
+}
+
+cmd_match() {
+	local regexp=$1
+	local text=$2
+
+	./target/debug/regex86 match "${regexp}" "${text}"
+}
+
+main() {
+	local tempdir=$(mktemp -d)
+	local exit_code=0
+
+	cargo build
+
+	for t in ${TESTS[@]}; do
+		local regexp=$(echo "${t}" | cut -d ',' -f 1)
+		local text=$(echo "${t}" | cut -d ',' -f 2)
+		local code=$(echo "${t}" | cut -d ',' -f 3)
+
+		echo -n "test 'regex86 match' ${regexp} against ${text} ... "
+		cmd_match "${regexp}" "${text}" &> /dev/null
+		if [[ $? != ${code} ]]; then
+			exit_code=1
+			echo 'FAILED'
+		else
+			echo 'ok'
+		fi
+
+		echo -n "test 'regex86 compile' ${regexp} against ${text} ... "
+		cmd_compile "${regexp}" "${text}" "${tmpdir}" &> /dev/null
+		if [[ $? != ${code} ]]; then
+			exit_code=1
+			echo 'FAILED'
+		else
+			echo 'ok'
+		fi
+	done
+
+	echo -en "\ntest result: "
+	if [[ ${exit_code} != 0 ]]; then
+		echo 'FAILED'
+	else
+		echo 'ok'
 	fi
-done
+
+	return ${exit_code}
+}
+
+main

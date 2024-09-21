@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Install dependencies
         run: sudo apt-get install -y --no-install-recommends nasm
-      - name: Run 'cargo test'
+      - name: Run cargo test
         run: cargo test
-      - name: Run './test.bash'
-        run: ./test.bash
+      - name: Run test.bash
+        run: bash test.bash
