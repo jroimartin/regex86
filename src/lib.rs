@@ -1,4 +1,4 @@
-//! Regexp compiler library for x86.
+//! Toy regexp engine.
 //!
 //! The only supported metacharacters are `* + ? | ( )`.  Their
 //! precedence, from weakest to strongest binding, is first
@@ -14,8 +14,6 @@ use std::{
     result, slice,
     str::FromStr,
 };
-
-mod asm;
 
 /// Regular expression result.
 pub type Result<T> = result::Result<T, Error>;
@@ -105,7 +103,7 @@ impl Display for Token {
 /// It returns the token list.
 ///
 /// ```
-/// use regex86::{scan, Token};
+/// use regexp::{scan, Token};
 ///
 /// let tokens = scan("(a|b)+c");
 /// assert_eq!(
@@ -122,9 +120,9 @@ impl Display for Token {
 ///     ]
 /// );
 /// ```
-pub fn scan(regexp: &str) -> Vec<Token> {
+pub fn scan(s: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
-    let mut chars = regexp.chars().peekable();
+    let mut chars = s.chars().peekable();
     while let Some(cur) = chars.next() {
         let cur = cur.into();
         tokens.push(cur);
@@ -218,7 +216,7 @@ impl Display for Times {
 /// returns the parsed AST.
 ///
 /// ```
-/// use regex86::{parse, scan, Expr, Times};
+/// use regexp::{parse, scan, Expr, Times};
 ///
 /// let tokens = scan("a*b");
 /// let ast = parse(&tokens).unwrap();
@@ -360,173 +358,12 @@ impl State {
 
 /// Regular expression compiler.
 #[derive(Default)]
-pub struct Compiler {
+struct Compiler {
     /// Next state identifier.
     next_state_id: u64,
 }
 
 impl Compiler {
-    /// Compile regular expression.
-    ///
-    /// The generated code targets ELF64 for x86_64 GNU/Linux.  It can
-    /// be compiled using [nasm]:
-    ///
-    /// ```text
-    /// nasm -o regexp.o -f elf64 regexp.asm
-    /// ld -o regexp regexp.o
-    /// ````
-    ///
-    /// [nasm]: https://nasm.us/
-    pub fn compile_str(s: &str) -> Result<String> {
-        let tokens = scan(s);
-        let expr = parse(&tokens)?;
-        Ok(Compiler::compile_ast(&expr))
-    }
-
-    /// Compile regular expression AST.
-    ///
-    /// See [`Compiler::compile_str`] for more details.
-    pub fn compile_ast(expr: &Expr) -> String {
-        let mut comp = Compiler::default();
-        let (code, _) = comp.build_asm(expr);
-        asm::PRELUDE.to_string() + &code
-    }
-
-    /// Returns the assembly code corresponding to the provided AST.
-    /// It returns `(code, state_id)`.
-    fn build_asm(&mut self, expr: &Expr) -> (String, u64) {
-        // FIXME: fix the following cases:
-        //   - `a*a` against `a` returns no match.
-        //   - `(a?)*b` against `` enters infinite loop.
-        let id = self.next_state_id();
-        let code = match expr {
-            Expr::Alternation { lhs, rhs } => {
-                let (lhs_code, lhs_id) = self.build_asm(lhs);
-                let (rhs_code, rhs_id) = self.build_asm(rhs);
-                format!(
-                    r#"
-                        e{id}:
-                                push r12
-                                mov r12, rdi
-                                call e{lhs_id}
-                                cmp rax, 0
-                                je .out
-                                mov rdi, r12
-                                call e{rhs_id}
-                        .out:
-                                pop r12
-                                ret
-
-                        {lhs_code}
-
-                        {rhs_code}
-                    "#
-                )
-            }
-            Expr::Concatenation { lhs, rhs } => {
-                let (lhs_code, lhs_id) = self.build_asm(lhs);
-                let (rhs_code, rhs_id) = self.build_asm(rhs);
-                format!(
-                    r#"
-                        e{id}:
-                                call e{lhs_id}
-                                cmp rax, 0
-                                jne .out
-                                call e{rhs_id}
-                        .out:
-                                ret
-
-                        {lhs_code}
-
-                        {rhs_code}
-                    "#
-                )
-            }
-            Expr::Repetition(expr, times) => {
-                let (expr_code, expr_id) = self.build_asm(expr);
-                match times {
-                    Times::ZeroOrMore => format!(
-                        r#"
-                        e{id}:
-                                push r12
-                        .loop:
-                                mov r12, rdi
-                                call e{expr_id}
-                                cmp rax, 0
-                                je .loop
-                                mov rdi, r12
-                                mov rax, 0
-                        .out:
-                                pop r12
-                                ret
-
-                        {expr_code}
-                        "#
-                    ),
-                    Times::OneOrMore => format!(
-                        r#"
-                        e{id}:
-                                push r12
-                                call e{expr_id}
-                                cmp rax, 0
-                                jne .out
-                        .loop:
-                                mov r12, rdi
-                                call e{expr_id}
-                                cmp rax, 0
-                                je .loop
-                                mov rdi, r12
-                                mov rax, 0
-                        .out:
-                                pop r12
-                                ret
-
-                        {expr_code}
-                        "#
-                    ),
-                    Times::ZeroOrOne => format!(
-                        r#"
-                        e{id}:
-                                push r12
-                                mov r12, rdi
-                                call e{expr_id}
-                                cmp rax, 0
-                                je .out
-                                mov rdi, r12
-                                mov rax, 0
-                        .out:
-                                pop r12
-                                ret
-
-                        {expr_code}
-                        "#
-                    ),
-                }
-            }
-            Expr::Grouping(expr) => return self.build_asm(expr),
-            Expr::Matching(ch) => {
-                format!(
-                    r#"
-                        e{id}:
-                                push r12
-                                mov r12b, [rdi]
-                                cmp r12b, '{ch}'
-                                je .match
-                                mov rax, 1
-                                jmp .out
-                        .match:
-                                inc rdi
-                                mov rax, 0
-                        .out:
-                                pop r12
-                                ret
-                    "#
-                )
-            }
-        };
-        (code, id)
-    }
-
     /// Returns the NFA corresponding to the provided AST.  The
     /// returned tuple is of the form `(start_state, end_state)`.
     fn build_nfa(&mut self, expr: &Expr) -> (Rc<RefCell<State>>, Rc<RefCell<State>>) {
@@ -585,19 +422,15 @@ impl Compiler {
     /// Returns a new [`State`].  Every generated state has a unique
     /// identifier.
     fn new_state(&mut self) -> Rc<RefCell<State>> {
+        let id = self.next_state_id;
+        self.next_state_id += 1;
+
         Rc::new(RefCell::new(State {
-            id: self.next_state_id(),
+            id,
             ch: None,
             fwd: Vec::new(),
             bck: Vec::new(),
         }))
-    }
-
-    /// Returns the next unique state ID.
-    fn next_state_id(&mut self) -> u64 {
-        let id = self.next_state_id;
-        self.next_state_id += 1;
-        id
     }
 }
 
@@ -621,7 +454,7 @@ impl FromStr for Regexp {
     /// ```
     /// use std::str::FromStr;
     ///
-    /// use regex86::Regexp;
+    /// use regexp::Regexp;
     ///
     /// let re = Regexp::from_str("(a|b)+c");
     /// assert!(re.is_ok());
@@ -641,7 +474,7 @@ impl Regexp {
     /// AST.
     ///
     /// ```
-    /// use regex86::{parse, scan, Regexp};
+    /// use regexp::{parse, scan, Regexp};
     ///
     /// let tokens = scan("(a|b)+c");
     /// let ast = parse(&tokens).unwrap();
@@ -669,7 +502,7 @@ impl Regexp {
     /// ```
     /// use std::str::FromStr;
     ///
-    /// use regex86::Regexp;
+    /// use regexp::Regexp;
     ///
     /// let mut re = Regexp::from_str("(a|b)+c").unwrap();
     /// assert_eq!(re.matches("aac"), true);
@@ -889,7 +722,7 @@ mod tests {
 
     #[test]
     fn regexp_matches() {
-        for (regexp, text, want) in &[
+        for (sre, text, want) in &[
             ("a", "a", true),
             ("a", "b", false),
             ("abc", "abc", true),
@@ -942,8 +775,8 @@ mod tests {
             (&("a?".repeat(50) + &"a".repeat(50)), &"a".repeat(50), true),
             ("ƒoo", "ƒoo", true),
         ] {
-            let mut re = Regexp::from_str(regexp).unwrap();
-            assert_eq!(re.matches(text), *want, "matching {regexp} against {text}");
+            let mut re = Regexp::from_str(sre).unwrap();
+            assert_eq!(re.matches(text), *want, "matching {sre} against {text}");
         }
     }
 }

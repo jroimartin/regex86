@@ -1,4 +1,4 @@
-//! Benchmarks regex86.
+//! Benchmarks regexp.
 //!
 //! It measures the time to match the regular expression a?**n**a**n**
 //! against the string a**n**.
@@ -8,16 +8,17 @@
 
 use std::{str::FromStr, time::Instant};
 
-use regex86::Regexp;
+use regexp::Regexp;
 
 const SAMPLES: usize = 250;
 const N: usize = 30;
 
 fn main() {
     for n in 1..=N {
-        let regexp = "a?".repeat(n) + &"a".repeat(n);
+        let sre = "a?".repeat(n) + &"a".repeat(n);
         let text = "a".repeat(n);
-        let mut re = Regexp::from_str(&regexp).unwrap();
+
+        let mut re = Regexp::from_str(&sre).unwrap();
 
         let now = Instant::now();
         for _ in 0..SAMPLES {

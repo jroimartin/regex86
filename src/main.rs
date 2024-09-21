@@ -1,12 +1,12 @@
-//! Regexp compiler for x86.
+//! Regexp engine.
 
 use std::{
+    env,
     fmt::{self, Debug, Display, Formatter},
     str::FromStr,
 };
 
-use clap::{Parser, Subcommand};
-use regex86::{self, Compiler, Regexp};
+use regexp::{self, Regexp};
 
 /// CLI error.
 enum CliError {
@@ -14,7 +14,7 @@ enum CliError {
     Str(String),
 
     /// Regular expression error.
-    Regexp(regex86::Error),
+    Regexp(regexp::Error),
 }
 
 impl From<&str> for CliError {
@@ -23,8 +23,8 @@ impl From<&str> for CliError {
     }
 }
 
-impl From<regex86::Error> for CliError {
-    fn from(err: regex86::Error) -> CliError {
+impl From<regexp::Error> for CliError {
+    fn from(err: regexp::Error) -> CliError {
         CliError::Regexp(err)
     }
 }
@@ -44,46 +44,17 @@ impl Debug for CliError {
     }
 }
 
-/// Regexp compiler for x86.
-#[derive(Parser)]
-struct Cli {
-    /// A subcommand of the CLI.
-    #[command(subcommand)]
-    command: Command,
-}
-
-/// Represents a subcommand of the CLI.
-#[derive(Subcommand)]
-enum Command {
-    /// Reports whether the regular expression matches the string.
-    Match {
-        /// Regular expression.
-        regexp: String,
-
-        /// Text to match.
-        text: String,
-    },
-
-    /// Compiles a regular expression into x86 assembly.
-    Compile {
-        /// Regular expression.
-        regexp: String,
-    },
-}
-
 fn main() -> Result<(), CliError> {
-    let cli = Cli::parse();
-    match cli.command {
-        Command::Match { regexp, text } => {
-            let mut re = Regexp::from_str(&regexp)?;
-            if !re.matches(&text) {
-                return Err("no match".into());
-            }
-        }
-        Command::Compile { regexp } => {
-            let code = Compiler::compile_str(&regexp)?;
-            print!("{code}");
-        }
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        return Err("usage: regexp <regexp> <text>".into());
+    }
+    let sre = &args[1];
+    let text = &args[2];
+
+    let mut re = Regexp::from_str(sre)?;
+    if !re.matches(text) {
+        return Err("no match".into());
     }
     Ok(())
 }
