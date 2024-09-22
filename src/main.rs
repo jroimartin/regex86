@@ -1,4 +1,4 @@
-//! Regexp engine.
+//! Command line interface for the `regexp` crate.
 
 use std::{
     env,
